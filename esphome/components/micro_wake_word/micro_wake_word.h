@@ -64,6 +64,15 @@ class MicroWakeWord : public Component
 
   void add_wake_word_model(WakeWordModel *model);
 
+  /// @brief Downloads a wake word model from a URL at runtime and registers it.
+  /// The URL should point to a microWakeWord manifest JSON file.
+  /// @param manifest_url URL to the model's manifest JSON
+  /// @return True if the model was successfully downloaded and loaded
+  bool load_model_from_url(const std::string &manifest_url);
+
+  /// @brief Removes all dynamically loaded (non-compiled-in) wake word models
+  void remove_dynamic_models();
+
 #ifdef USE_MICRO_WAKE_WORD_VAD
   void add_vad_model(const uint8_t *model_start, uint8_t probability_cutoff, size_t sliding_window_size,
                      size_t tensor_arena_size);

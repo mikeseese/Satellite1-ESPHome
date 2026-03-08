@@ -92,7 +92,7 @@ class StreamingModel {
 
 class WakeWordModel final : public StreamingModel {
  public:
-  /// @brief Constructs a wake word model object
+  /// @brief Constructs a wake word model object (for compile-time embedded models)
   /// @param id (std::string) identifier for this model
   /// @param model_start (const uint8_t *) pointer to the start of the model's TFLite FlatBuffer
   /// @param default_probability_cutoff (uint8_t) probability cutoff for acceping the wake word has been said
@@ -105,6 +105,8 @@ class WakeWordModel final : public StreamingModel {
   WakeWordModel(const std::string &id, const uint8_t *model_start, uint8_t default_probability_cutoff,
                 size_t sliding_window_average_size, const std::string &wake_word, size_t tensor_arena_size,
                 bool default_enabled, bool internal_only);
+
+  ~WakeWordModel();
 
   void log_model_config() override;
 
@@ -127,6 +129,9 @@ class WakeWordModel final : public StreamingModel {
 
   bool get_internal_only() { return this->internal_only_; }
 
+  /// @brief Returns true if this model was dynamically loaded at runtime (not compiled in)
+  bool is_dynamic() const { return this->owned_model_data_ != nullptr; }
+
  protected:
   std::string id_;
   std::string wake_word_;
@@ -135,6 +140,12 @@ class WakeWordModel final : public StreamingModel {
   bool internal_only_;
 
   ESPPreferenceObject pref_;
+
+  // Owned model data for dynamically downloaded models (nullptr for compile-time models)
+  uint8_t *owned_model_data_{nullptr};
+  size_t owned_model_data_size_{0};
+
+  friend class MicroWakeWord;
 };
 
 class VADModel final : public StreamingModel {

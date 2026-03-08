@@ -5,6 +5,8 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
+#include <esp_heap_caps.h>
+
 static const char *const TAG = "micro_wake_word";
 
 namespace esphome {
@@ -192,6 +194,15 @@ WakeWordModel::WakeWordModel(const std::string &id, const uint8_t *model_start, 
     this->enabled_ = default_enabled;
   }
 };
+
+WakeWordModel::~WakeWordModel() {
+  this->unload_model();
+  if (this->owned_model_data_ != nullptr) {
+    heap_caps_free(this->owned_model_data_);
+    this->owned_model_data_ = nullptr;
+    this->owned_model_data_size_ = 0;
+  }
+}
 
 void WakeWordModel::enable() {
   this->enabled_ = true;
