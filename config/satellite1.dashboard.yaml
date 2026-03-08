@@ -99,7 +99,7 @@ logger:
 #     # uncomment the following line to remove the default "hey_jarvis" wake word
 #     - id: !remove hey_jarvis
 
-## If you override wake word models, you also want to remove the sensitivity selector
+## If you override wake word models, you should also remove the sensitivity selector
 ## as it is hard coded to the provided models:
 # select:
 #   id: !remove mww_sensitivity_select
