@@ -104,6 +104,11 @@ voice_assistant:
   volume_multiplier: 1
   on_client_connected:
     - lambda: id(init_in_progress) = false;
+    - lambda: |-
+        auto url = id(custom_wake_word_url).state;
+        if (!url.empty()) {
+          id(mww).load_model_from_url(url);
+        }
     - micro_wake_word.start:
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
@@ -257,3 +262,36 @@ select:
           id(okay_nabu).set_probability_cutoff(143);    // 0.56 -> 0.751 FAPH on DipCo
           id(hey_jarvis).set_probability_cutoff(212);   // 0.83 -> 1.502 FAPH on DipCo
         }
+
+text:
+  - platform: template
+    id: custom_wake_word_url
+    name: "Custom Wake Word URL"
+    icon: "mdi:account-voice"
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    max_length: 500
+    on_value:
+      then:
+        - if:
+            condition:
+              micro_wake_word.is_running:
+            then:
+              - micro_wake_word.stop:
+              - wait_until:
+                  not:
+                    micro_wake_word.is_running:
+        - lambda: id(mww).remove_dynamic_models();
+        - if:
+            condition:
+              lambda: return !x.empty();
+            then:
+              - lambda: id(mww).load_model_from_url(x);
+        - if:
+            condition:
+              api.connected:
+            then:
+              - micro_wake_word.start:

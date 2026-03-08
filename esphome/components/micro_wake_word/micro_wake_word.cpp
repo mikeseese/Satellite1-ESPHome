@@ -9,6 +9,11 @@
 
 #include "esphome/components/audio/audio_transfer_buffer.h"
 
+#include <cJSON.h>
+#include <esp_crt_bundle.h>
+#include <esp_heap_caps.h>
+#include <esp_http_client.h>
+
 #ifdef USE_OTA
 #include "esphome/components/ota/ota_backend.h"
 #endif
@@ -219,6 +224,272 @@ std::vector<WakeWordModel *> MicroWakeWord::get_wake_words() {
 }
 
 void MicroWakeWord::add_wake_word_model(WakeWordModel *model) { this->wake_word_models_.push_back(model); }
+
+/// @brief Downloads content from a URL into a caller-provided buffer
+/// @param url URL to download from
+/// @param buffer Pre-allocated buffer to write data into
+/// @param buffer_size Size of the buffer
+/// @return Number of bytes downloaded, or -1 on error
+static int download_to_buffer(const std::string &url, uint8_t *buffer, size_t buffer_size) {
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.crt_bundle_attach = esp_crt_bundle_attach;
+  config.timeout_ms = 30000;
+  config.buffer_size = 4096;
+  config.disable_auto_redirect = false;
+  config.max_redirection_count = 10;
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (client == nullptr) {
+    ESP_LOGE(TAG, "Failed to initialize HTTP client for %s", url.c_str());
+    return -1;
+  }
+
+  esp_err_t err = esp_http_client_open(client, 0);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to open HTTP connection to %s: %s", url.c_str(), esp_err_to_name(err));
+    esp_http_client_cleanup(client);
+    return -1;
+  }
+
+  esp_http_client_fetch_headers(client);
+  int status_code = esp_http_client_get_status_code(client);
+
+  if (status_code != 200) {
+    ESP_LOGE(TAG, "HTTP request failed with status %d for %s", status_code, url.c_str());
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    return -1;
+  }
+
+  size_t total_read = 0;
+  int read_len;
+  while ((read_len = esp_http_client_read(client, (char *) (buffer + total_read), buffer_size - total_read)) > 0) {
+    total_read += read_len;
+    if (total_read >= buffer_size)
+      break;
+  }
+
+  esp_http_client_close(client);
+  esp_http_client_cleanup(client);
+
+  return total_read;
+}
+
+/// @brief Resolves a relative URL against a base URL
+/// @param base_url The base URL (e.g., "https://example.com/path/manifest.json")
+/// @param relative The relative path (e.g., "model.tflite")
+/// @return The resolved URL
+static std::string resolve_relative_url(const std::string &base_url, const std::string &relative) {
+  if (relative.find("://") != std::string::npos) {
+    return relative;  // Already absolute
+  }
+  size_t last_slash = base_url.rfind('/');
+  if (last_slash == std::string::npos) {
+    return relative;
+  }
+  return base_url.substr(0, last_slash + 1) + relative;
+}
+
+bool MicroWakeWord::load_model_from_url(const std::string &manifest_url) {
+  ESP_LOGI(TAG, "Downloading wake word model manifest from %s", manifest_url.c_str());
+
+  // Download the manifest JSON (max 4KB)
+  static const size_t MAX_MANIFEST_SIZE = 4096;
+  uint8_t *json_buffer = (uint8_t *) malloc(MAX_MANIFEST_SIZE);
+  if (json_buffer == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate memory for manifest download");
+    return false;
+  }
+
+  int json_len = download_to_buffer(manifest_url, json_buffer, MAX_MANIFEST_SIZE - 1);
+  if (json_len <= 0) {
+    ESP_LOGE(TAG, "Failed to download manifest from %s", manifest_url.c_str());
+    free(json_buffer);
+    return false;
+  }
+  json_buffer[json_len] = '\0';  // Null-terminate for JSON parsing
+
+  // Parse the manifest JSON
+  cJSON *root = cJSON_Parse((const char *) json_buffer);
+  free(json_buffer);
+
+  if (root == nullptr) {
+    ESP_LOGE(TAG, "Failed to parse manifest JSON");
+    return false;
+  }
+
+  // Check manifest version
+  cJSON *version_item = cJSON_GetObjectItem(root, "version");
+  if (version_item == nullptr || !cJSON_IsNumber(version_item)) {
+    ESP_LOGE(TAG, "Manifest missing 'version' field");
+    cJSON_Delete(root);
+    return false;
+  }
+  int version = version_item->valueint;
+  if (version != 1 && version != 2) {
+    ESP_LOGE(TAG, "Unsupported manifest version: %d", version);
+    cJSON_Delete(root);
+    return false;
+  }
+
+  // Get the model filename
+  cJSON *model_item = cJSON_GetObjectItem(root, "model");
+  if (model_item == nullptr || !cJSON_IsString(model_item)) {
+    ESP_LOGE(TAG, "Manifest missing 'model' field");
+    cJSON_Delete(root);
+    return false;
+  }
+  std::string model_filename = model_item->valuestring;
+
+  // Get the wake word name
+  cJSON *wake_word_item = cJSON_GetObjectItem(root, "wake_word");
+  if (wake_word_item == nullptr || !cJSON_IsString(wake_word_item)) {
+    ESP_LOGE(TAG, "Manifest missing 'wake_word' field");
+    cJSON_Delete(root);
+    return false;
+  }
+  std::string wake_word = wake_word_item->valuestring;
+
+  // Get the micro section
+  cJSON *micro = cJSON_GetObjectItem(root, "micro");
+  if (micro == nullptr) {
+    ESP_LOGE(TAG, "Manifest missing 'micro' section");
+    cJSON_Delete(root);
+    return false;
+  }
+
+  // Get probability cutoff
+  cJSON *prob_item = cJSON_GetObjectItem(micro, "probability_cutoff");
+  if (prob_item == nullptr || !cJSON_IsNumber(prob_item)) {
+    ESP_LOGE(TAG, "Manifest missing 'micro.probability_cutoff'");
+    cJSON_Delete(root);
+    return false;
+  }
+  uint8_t probability_cutoff = static_cast<uint8_t>(prob_item->valuedouble * 255);
+
+  // Get sliding window size
+  size_t sliding_window_size = 8;  // Default
+  if (version == 1) {
+    cJSON *sw_item = cJSON_GetObjectItem(micro, "sliding_window_average_size");
+    if (sw_item != nullptr && cJSON_IsNumber(sw_item)) {
+      sliding_window_size = sw_item->valueint;
+    }
+  } else {
+    cJSON *sw_item = cJSON_GetObjectItem(micro, "sliding_window_size");
+    if (sw_item != nullptr && cJSON_IsNumber(sw_item)) {
+      sliding_window_size = sw_item->valueint;
+    }
+  }
+
+  // Get tensor arena size (default for V1 models)
+  size_t tensor_arena_size = 45672;
+  if (version == 2) {
+    cJSON *ta_item = cJSON_GetObjectItem(micro, "tensor_arena_size");
+    if (ta_item != nullptr && cJSON_IsNumber(ta_item)) {
+      tensor_arena_size = ta_item->valueint;
+    }
+  }
+
+  // Get feature step size and validate against existing models
+  uint8_t feature_step_size = 20;  // Default for V1
+  if (version == 2) {
+    cJSON *fs_item = cJSON_GetObjectItem(micro, "feature_step_size");
+    if (fs_item != nullptr && cJSON_IsNumber(fs_item)) {
+      feature_step_size = fs_item->valueint;
+    }
+  }
+
+  if (feature_step_size != this->features_step_size_) {
+    ESP_LOGE(TAG, "Model feature step size (%d) doesn't match existing models (%d)", feature_step_size,
+             this->features_step_size_);
+    cJSON_Delete(root);
+    return false;
+  }
+
+  // Get trained languages (V2 only)
+  std::vector<std::string> trained_languages;
+  if (version == 2) {
+    cJSON *langs = cJSON_GetObjectItem(root, "trained_languages");
+    if (langs != nullptr && cJSON_IsArray(langs)) {
+      cJSON *lang;
+      cJSON_ArrayForEach(lang, langs) {
+        if (cJSON_IsString(lang)) {
+          trained_languages.push_back(lang->valuestring);
+        }
+      }
+    }
+  } else {
+    trained_languages.push_back("en");
+  }
+
+  cJSON_Delete(root);
+
+  // Resolve the model binary URL relative to the manifest URL
+  std::string model_url = resolve_relative_url(manifest_url, model_filename);
+  ESP_LOGI(TAG, "Downloading wake word model '%s' from %s", wake_word.c_str(), model_url.c_str());
+
+  // Download the TFLite model binary to PSRAM (max 512KB)
+  static const size_t MAX_MODEL_SIZE = 512 * 1024;
+  uint8_t *model_data = (uint8_t *) heap_caps_malloc(MAX_MODEL_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (model_data == nullptr) {
+    // Fall back to regular allocation if PSRAM not available
+    model_data = (uint8_t *) malloc(MAX_MODEL_SIZE);
+  }
+  if (model_data == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate memory for model download");
+    return false;
+  }
+
+  int model_size = download_to_buffer(model_url, model_data, MAX_MODEL_SIZE);
+  if (model_size <= 0) {
+    ESP_LOGE(TAG, "Failed to download model from %s", model_url.c_str());
+    heap_caps_free(model_data);
+    return false;
+  }
+
+  // Reallocate to exact size to save memory
+  uint8_t *exact_model_data =
+      (uint8_t *) heap_caps_realloc(model_data, model_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (exact_model_data == nullptr) {
+    exact_model_data = (uint8_t *) realloc(model_data, model_size);
+  }
+  if (exact_model_data != nullptr) {
+    model_data = exact_model_data;
+  }
+  // If realloc fails, we just keep the larger buffer - not critical
+
+  // Generate a unique ID for the dynamic model
+  std::string model_id = "dyn_" + wake_word;
+
+  // Create the WakeWordModel
+  WakeWordModel *model = new WakeWordModel(model_id, model_data, probability_cutoff, sliding_window_size, wake_word,
+                                           tensor_arena_size, true, false);
+  model->owned_model_data_ = model_data;
+  model->owned_model_data_size_ = model_size;
+
+  for (const auto &lang : trained_languages) {
+    model->add_trained_language(lang);
+  }
+
+  this->wake_word_models_.push_back(model);
+
+  ESP_LOGI(TAG, "Successfully loaded dynamic wake word model '%s' (%d bytes)", wake_word.c_str(), model_size);
+  return true;
+}
+
+void MicroWakeWord::remove_dynamic_models() {
+  auto it = this->wake_word_models_.begin();
+  while (it != this->wake_word_models_.end()) {
+    if ((*it)->is_dynamic()) {
+      ESP_LOGI(TAG, "Removing dynamic wake word model '%s'", (*it)->get_wake_word().c_str());
+      delete *it;
+      it = this->wake_word_models_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
 
 #ifdef USE_MICRO_WAKE_WORD_VAD
 void MicroWakeWord::add_vad_model(const uint8_t *model_start, uint8_t probability_cutoff, size_t sliding_window_size,

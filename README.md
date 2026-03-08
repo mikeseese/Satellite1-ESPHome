@@ -172,6 +172,18 @@ Before updating your ESPHome Device Builder, verify that the latest Satellite1 f
 | `main`|![GitHub Release](https://img.shields.io/github/v/release/FutureProofHomes/Satellite1-ESPHome?filter=!*-beta*)|![Dynamic YAML Badge](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fgithub.com%2FFutureProofHomes%2FSatellite1-ESPHome%2Fraw%2Fmain%2F.github%2Fworkflows%2Fbuild_latest.yaml&query=%24..esphome-version&label=ESPHome)| 
 
 
+### Custom Wake Words (No Firmware Rebuild Required)
+You can add custom [microWakeWord](https://github.com/kahrendt/microWakeWord) models to your Satellite1 at runtime, directly from Home Assistant — no firmware rebuild or fork needed. Models are downloaded over-the-air and activated immediately.
+
+1. Find the URL to a microWakeWord model manifest JSON file (e.g., from [kahrendt/microWakeWord releases](https://github.com/kahrendt/microWakeWord/releases)).
+2. In Home Assistant, navigate to your Satellite1 device and find the **"Custom Wake Word URL"** text entity under the device's configuration section.
+3. Paste the manifest URL (e.g., `https://github.com/kahrendt/microWakeWord/releases/download/hey_jarvis/hey_jarvis.json`) and press Enter.
+4. The device will automatically download and activate the new wake word model. Wake word detection restarts with the new model included.
+
+To remove a custom wake word, simply clear the URL field.
+
+> **Note:** The custom wake word model is re-downloaded on each device reboot (the URL is saved, but model data is stored in volatile PSRAM). The model's feature step size must match the built-in models (typically 20ms).
+
 ### Terminal Builds
 Create/activate environment by running from project root:
 ```bash
