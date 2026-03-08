@@ -107,7 +107,9 @@ voice_assistant:
     - lambda: |-
         auto url = id(custom_wake_word_url).state;
         if (!url.empty()) {
-          id(mww).load_model_from_url(url);
+          if (!id(mww).load_model_from_url(url)) {
+            ESP_LOGW("micro_wake_word", "Failed to load custom wake word from saved URL");
+          }
         }
     - micro_wake_word.start:
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
@@ -289,7 +291,10 @@ text:
             condition:
               lambda: return !x.empty();
             then:
-              - lambda: id(mww).load_model_from_url(x);
+              - lambda: |-
+                  if (!id(mww).load_model_from_url(x)) {
+                    ESP_LOGW("micro_wake_word", "Failed to load custom wake word model from URL");
+                  }
         - if:
             condition:
               api.connected:

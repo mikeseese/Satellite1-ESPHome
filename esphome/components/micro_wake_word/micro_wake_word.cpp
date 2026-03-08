@@ -264,10 +264,12 @@ static int download_to_buffer(const std::string &url, uint8_t *buffer, size_t bu
 
   size_t total_read = 0;
   int read_len;
-  while ((read_len = esp_http_client_read(client, (char *) (buffer + total_read), buffer_size - total_read)) > 0) {
-    total_read += read_len;
-    if (total_read >= buffer_size)
+  while (total_read < buffer_size) {
+    size_t remaining = buffer_size - total_read;
+    read_len = esp_http_client_read(client, (char *) (buffer + total_read), remaining);
+    if (read_len <= 0)
       break;
+    total_read += read_len;
   }
 
   esp_http_client_close(client);
@@ -429,40 +431,85 @@ bool MicroWakeWord::load_model_from_url(const std::string &manifest_url) {
   std::string model_url = resolve_relative_url(manifest_url, model_filename);
   ESP_LOGI(TAG, "Downloading wake word model '%s' from %s", wake_word.c_str(), model_url.c_str());
 
-  // Download the TFLite model binary to PSRAM (max 512KB)
-  static const size_t MAX_MODEL_SIZE = 512 * 1024;
-  uint8_t *model_data = (uint8_t *) heap_caps_malloc(MAX_MODEL_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (model_data == nullptr) {
-    // Fall back to regular allocation if PSRAM not available
-    model_data = (uint8_t *) malloc(MAX_MODEL_SIZE);
-  }
-  if (model_data == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate memory for model download");
+  // First, query the model size via HTTP headers
+  esp_http_client_config_t model_config = {};
+  model_config.url = model_url.c_str();
+  model_config.crt_bundle_attach = esp_crt_bundle_attach;
+  model_config.timeout_ms = 30000;
+  model_config.buffer_size = 4096;
+  model_config.disable_auto_redirect = false;
+  model_config.max_redirection_count = 10;
+
+  esp_http_client_handle_t model_client = esp_http_client_init(&model_config);
+  if (model_client == nullptr) {
+    ESP_LOGE(TAG, "Failed to initialize HTTP client for model download");
     return false;
   }
 
-  int model_size = download_to_buffer(model_url, model_data, MAX_MODEL_SIZE);
-  if (model_size <= 0) {
-    ESP_LOGE(TAG, "Failed to download model from %s", model_url.c_str());
+  esp_err_t err = esp_http_client_open(model_client, 0);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to open HTTP connection for model: %s", esp_err_to_name(err));
+    esp_http_client_cleanup(model_client);
+    return false;
+  }
+
+  int content_length = esp_http_client_fetch_headers(model_client);
+  int status_code = esp_http_client_get_status_code(model_client);
+  if (status_code != 200) {
+    ESP_LOGE(TAG, "Model download failed with status %d", status_code);
+    esp_http_client_close(model_client);
+    esp_http_client_cleanup(model_client);
+    return false;
+  }
+
+  // Determine allocation size: use Content-Length if available, otherwise use a maximum
+  static const size_t MAX_MODEL_SIZE = 512 * 1024;
+  size_t alloc_size = (content_length > 0) ? (size_t) content_length : MAX_MODEL_SIZE;
+  if (alloc_size > MAX_MODEL_SIZE) {
+    ESP_LOGE(TAG, "Model too large: %d bytes (max %d)", content_length, MAX_MODEL_SIZE);
+    esp_http_client_close(model_client);
+    esp_http_client_cleanup(model_client);
+    return false;
+  }
+
+  // Allocate in PSRAM, fall back to regular heap
+  uint8_t *model_data = (uint8_t *) heap_caps_malloc(alloc_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (model_data == nullptr) {
+    model_data = (uint8_t *) malloc(alloc_size);
+  }
+  if (model_data == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate %d bytes for model", alloc_size);
+    esp_http_client_close(model_client);
+    esp_http_client_cleanup(model_client);
+    return false;
+  }
+
+  // Download the model data
+  size_t total_read = 0;
+  int read_len;
+  while (total_read < alloc_size) {
+    size_t remaining = alloc_size - total_read;
+    read_len = esp_http_client_read(model_client, (char *) (model_data + total_read), remaining);
+    if (read_len <= 0)
+      break;
+    total_read += read_len;
+  }
+
+  esp_http_client_close(model_client);
+  esp_http_client_cleanup(model_client);
+
+  if (total_read == 0) {
+    ESP_LOGE(TAG, "Failed to download model data from %s", model_url.c_str());
     heap_caps_free(model_data);
     return false;
   }
 
-  // Reallocate to exact size to save memory
-  uint8_t *exact_model_data =
-      (uint8_t *) heap_caps_realloc(model_data, model_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (exact_model_data == nullptr) {
-    exact_model_data = (uint8_t *) realloc(model_data, model_size);
-  }
-  if (exact_model_data != nullptr) {
-    model_data = exact_model_data;
-  }
-  // If realloc fails, we just keep the larger buffer - not critical
+  int model_size = total_read;
 
   // Generate a unique ID for the dynamic model
   std::string model_id = "dyn_" + wake_word;
 
-  // Create the WakeWordModel
+  // Create the WakeWordModel (default_enabled=true, internal_only=false)
   WakeWordModel *model = new WakeWordModel(model_id, model_data, probability_cutoff, sliding_window_size, wake_word,
                                            tensor_arena_size, true, false);
   model->owned_model_data_ = model_data;
