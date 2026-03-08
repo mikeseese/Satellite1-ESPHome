@@ -172,34 +172,6 @@ Before updating your ESPHome Device Builder, verify that the latest Satellite1 f
 | `main`|![GitHub Release](https://img.shields.io/github/v/release/FutureProofHomes/Satellite1-ESPHome?filter=!*-beta*)|![Dynamic YAML Badge](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fgithub.com%2FFutureProofHomes%2FSatellite1-ESPHome%2Fraw%2Fmain%2F.github%2Fworkflows%2Fbuild_latest.yaml&query=%24..esphome-version&label=ESPHome)| 
 
 
-### Custom Wake Words from a Public GitHub Repo
-You can add custom [microWakeWord](https://github.com/kahrendt/microWakeWord) models to your Satellite1 without forking this firmware repo. To do this, create a public GitHub repository containing a YAML file with your custom wake word model definitions, then reference it as a package in your ESPHome dashboard YAML.
-
-1. Create a new public GitHub repository (e.g. `my-satellite1-wake-words`).
-2. Add a YAML file (e.g. `micro_wake_words.yaml`) with your custom models. See [`config/custom_micro_wake_words.yaml`](config/custom_micro_wake_words.yaml) for a ready-to-use template.
-3. In your Satellite1 ESPHome dashboard YAML, add the following under `packages:`:
-   ```yaml
-   packages:
-     custom_micro_wake_words:
-       url: https://github.com/your-username/your-wake-word-repo
-       ref: main
-       files:
-         - micro_wake_words.yaml
-       refresh: 1d
-   ```
-4. Rebuild your firmware from the ESPHome dashboard in Home Assistant.
-
-Your custom YAML file should define the `micro_wake_word` component with `id: mww` to extend the default configuration:
-```yaml
-micro_wake_word:
-  id: mww
-  models:
-    - id: my_custom_wake_word
-      model: https://github.com/kahrendt/microWakeWord/releases/download/<tag>/<model>.json
-```
-
-Models can be specified as HTTP URLs, git repo references, or built-in model names. For more details on supported model source formats, see the [template file](config/custom_micro_wake_words.yaml).
-
 ### Terminal Builds
 Create/activate environment by running from project root:
 ```bash

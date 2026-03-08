@@ -62,35 +62,7 @@ logger:
 #   id: snapcast_client
 #   server_ip: 192.168.178.101
 
-## OPTIONALLY, add custom micro wake word models from a public GitHub repo.
-## This lets you add microWakeWord models without forking this firmware repo.
-##
-## To use this feature:
-##   1. Create a public GitHub repo with a YAML file defining your custom wake word models.
-##      See config/custom_micro_wake_words.yaml in this repo for an example template.
-##   2. Uncomment the "custom_micro_wake_words" package below and update the url/ref/files
-##      to point to your public GitHub repo and YAML file.
-##   3. Rebuild your firmware from the ESPHome dashboard in Home Assistant.
-##
-## Your custom YAML file should look like:
-##   micro_wake_word:
-##     id: mww
-##     models:
-##       - id: my_custom_wake_word
-##         model: https://github.com/<user>/microWakeWord/releases/download/<tag>/<model>.json
-##
-## Uncomment the following lines and set them to your repo:
-
-# packages:
-#   custom_micro_wake_words:
-#     url: https://github.com/your-username/your-wake-word-repo
-#     ref: main
-#     files:
-#       - micro_wake_words.yaml
-#     refresh: 1d
-
-## ALTERNATIVELY, uncomment the following lines to directly add a custom micro wake word model
-## without creating a separate GitHub repo:
+## OPTIONALLY, uncomment the following lines to set a custom micro wake word model
 # micro_wake_word:
 #   id: mww
 #   models:
@@ -98,8 +70,6 @@ logger:
 #       model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
 #     # uncomment the following line to remove the default "hey_jarvis" wake word
 #     - id: !remove hey_jarvis
-
-## If you override wake word models, you should also remove the sensitivity selector
-## as it is hard coded to the provided models:
+# you also want to remove the sensitivity selector as it is hard coded to the provided models
 # select:
 #   id: !remove mww_sensitivity_select
