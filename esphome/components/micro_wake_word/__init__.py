@@ -452,6 +452,7 @@ async def to_code(config):
     cg.add(var.set_microphone_source(mic_source))
 
     cg.add_define("USE_MICRO_WAKE_WORD")
+    cg.add_define("USE_MICRO_WAKE_WORD_DYNAMIC_MODELS")
     ota.request_ota_state_listeners()
 
     esp32.add_idf_component(name="espressif/esp-tflite-micro", ref="1.3.3~1")
