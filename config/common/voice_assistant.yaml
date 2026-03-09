@@ -275,7 +275,7 @@ text:
     optimistic: true
     restore_value: true
     initial_value: ""
-    max_length: 500
+    max_length: 255
     on_value:
       then:
         - if:
