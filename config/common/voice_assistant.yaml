@@ -105,14 +105,12 @@ voice_assistant:
   on_client_connected:
     - lambda: id(init_in_progress) = false;
     - lambda: |-
-        #ifdef USE_MICRO_WAKE_WORD_DYNAMIC_MODELS
         auto url = id(custom_wake_word_url).state;
         if (!url.empty()) {
           if (!id(mww).load_model_from_url(url)) {
             ESP_LOGW("micro_wake_word", "Failed to load custom wake word from saved URL");
           }
         }
-        #endif
     - micro_wake_word.start:
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
@@ -288,20 +286,15 @@ text:
               - wait_until:
                   not:
                     micro_wake_word.is_running:
-        - lambda: |-
-            #ifdef USE_MICRO_WAKE_WORD_DYNAMIC_MODELS
-            id(mww).remove_dynamic_models();
-            #endif
+        - lambda: id(mww).remove_dynamic_models();
         - if:
             condition:
               lambda: return !x.empty();
             then:
               - lambda: |-
-                  #ifdef USE_MICRO_WAKE_WORD_DYNAMIC_MODELS
                   if (!id(mww).load_model_from_url(x)) {
                     ESP_LOGW("micro_wake_word", "Failed to load custom wake word model from URL");
                   }
-                  #endif
         - if:
             condition:
               api.connected:
